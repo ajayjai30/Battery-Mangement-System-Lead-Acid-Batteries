@@ -108,17 +108,26 @@ READ_API_KEY = "YOUR_READ_API_KEY"
 python thingspeak_bridge.py
 ```
 
-### 📟 Sample Output
-
-```text
-🔋 Initializing AI BMS Engine...
-✅ AI Engine Ready. Listening to ThingSpeak...
---------------------------------------------------
-📊 Sensor Reading: 12.6V | 2.5A | 34.0°C
-🔋 PREDICTED SOC: 98.45%
---------------------------------------------------
+## **📊 Example Output for Thinkspeak file:**
 ```
+================================================================================
+🌐 THINGSPEAK BRIDGE - AI MODEL CLOUD CONNECTOR
+================================================================================
+Channel ID: 2792345
+Poll Interval: 16 seconds
+================================================================================
 
+✅ 🔋 AI Engine Initialized. Waiting for data...
+================================================================================
+🚀 BRIDGE ACTIVE - LISTENING FOR SENSOR DATA...
+================================================================================
+[2026-01-18 14:23:15] 📊 Sensor: 3.85V, -2.30A, 28.5°C | ⏳ Buffering data... (1/10)
+[2026-01-18 14:23:31] 📊 Sensor: 3.82V, -2.45A, 29.0°C | ⏳ Buffering data... (2/10)
+...
+[2026-01-18 14:25:39] 📊 Sensor: 3.75V, -2.80A, 30.2°C | 🔋 AI SOC: 72.45%
+[2026-01-18 14:25:55] 📊 Sensor: 3.73V, -3.00A, 30.8°C | 🔋 AI SOC: 68.12%
+---
+```
 ---
 
 ## 🧠 Code Usage (Custom Integration)
@@ -143,9 +152,6 @@ if soc is not None:
 else:
     print("Buffering data (waiting for 10 samples)...")
 ```
-
----
-
 ## 📊 Model Performance
 
 * **Training Hardware:** Tesla P100 GPU
