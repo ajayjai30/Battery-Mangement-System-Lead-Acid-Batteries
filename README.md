@@ -16,6 +16,9 @@ Unlike traditional BMS solutions that rely on simple voltage lookup tables (whic
 ## 📌 Kaggle-Notebook: 
   [Click-Here for Notebook](https://www.kaggle.com/code/ajayjaikrishnan/battery-management-system)
 
+## 📌 Dataset-Link
+   [Dataset](https://drive.google.com/file/d/1H74jt1Lx9qh95v2VWVgHUM-3GheuZynN/view?usp=sharing)
+
 ### 🔄 Hybrid IoT Architecture
 
 1. **Sensors** push raw data to the **ThingSpeak Cloud**
