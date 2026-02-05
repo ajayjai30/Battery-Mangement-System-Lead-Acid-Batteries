@@ -1,170 +1,150 @@
 import numpy as np
 import tensorflow as tf
-from tensorflow import keras
 import joblib
+import os
 from collections import deque
-import warnings
-warnings.filterwarnings('ignore')
+from datetime import datetime
 
-# ============================================================================
-# BMS_Predictor Class: Real-Time Inference Handler
-# ============================================================================
-
-class BMS_Predictor:
+class BMSPredictor:
     """
-    Battery Management System Real-Time Predictor
-    
-    This class handles real-time SOC (State of Charge) prediction from streaming
-    sensor data using a trained LSTM model with proper feature engineering.
+    SOH (State of Health) Predictor for Lead-Acid Batteries.
+    Uses an LSTM model with Robust Smoothing to track degradation.
     """
     
-    def __init__(self, model_path, scaler_x_path, scaler_y_path, seq_length=10):
-        """
-        Initialize the BMS Predictor with model and scalers.
+    def __init__(self, model_dir='models', scaler_dir='scalers'):
+        print("❤️ Initializing SOH Prediction Engine...")
         
+        # 1. Load Model
+        # We prioritize the GPU/Keras model for Python environments
+        self.model = None
+        try:
+            model_path = os.path.join(model_dir, 'soh_model_gpu.keras')
+            # Fallback if specific gpu name not found
+            if not os.path.exists(model_path):
+                 model_path = os.path.join(model_dir, 'soh_model_robust.keras')
+            
+            if os.path.exists(model_path):
+                self.model = tf.keras.models.load_model(model_path)
+                print(f"✓ Loaded SOH Model: {model_path}")
+            else:
+                print(f"❌ Error: Model file not found in {model_dir}")
+        except Exception as e:
+            print(f"⚠️ Model load failed: {e}")
+
+        # 2. Load Scalers
+        try:
+            self.scaler_X = joblib.load(os.path.join(scaler_dir, 'scaler_X_soh.pkl'))
+            self.scaler_y = joblib.load(os.path.join(scaler_dir, 'scaler_y_soh.pkl'))
+            print("✓ Loaded SOH Scalers")
+        except FileNotFoundError:
+            print(f"❌ CRITICAL: Scalers not found in {scaler_dir}! Run training pipeline first.")
+            return
+
+        # 3. Memory & Smoothing
+        self.seq_length = 100 # Must match the training sequence length
+        self.data_buffer = deque(maxlen=self.seq_length) # Stores raw features for LSTM
+        self.soh_smoothing = deque(maxlen=20) # Average last 20 predictions for stability
+        
+        # 4. Feature Engineering Memory (State variables)
+        self.prev_v = None
+        self.prev_i = None
+        self.cumulative_energy = 0.0
+        self.last_time = datetime.now()
+
+    def _engineer_features(self, v, i, t):
+        """
+        Calculates advanced SOH indicators in real-time.
+        Order must match training: [V, I, Temp, Res_Proxy, Energy, Stress]
+        """
+        now = datetime.now()
+        # Calculate time difference in hours (for Energy integration)
+        dt_seconds = (now - self.last_time).total_seconds()
+        dt_hours = dt_seconds / 3600.0
+        
+        # Avoid huge jumps on first run
+        if dt_hours > 1.0: dt_hours = 0.0 
+        
+        # 1. Internal Resistance Proxy (|dV / dI|)
+        # This is the primary physical indicator of SOH
+        ir_proxy = 0.0
+        if self.prev_v is not None and self.prev_i is not None:
+            di = abs(i - self.prev_i)
+            dv = abs(v - self.prev_v)
+            # Only calculate if current change is significant (to avoid noise division)
+            if di > 0.05: 
+                ir_proxy = dv / di
+        
+        # 2. Cumulative Energy (Throughput)
+        # SOH degrades as total energy processed increases
+        power = abs(v * i)
+        self.cumulative_energy += (power * dt_hours)
+        
+        # 3. Thermal Stress Index
+        # High current at high temp accelerates aging
+        stress = abs(i) * t
+        
+        # Update state for next loop
+        self.prev_v = v
+        self.prev_i = i
+        self.last_time = now
+        
+        return [v, i, t, ir_proxy, self.cumulative_energy, stress]
+
+    def predict_realtime(self, voltage, current, temp):
+        """
+        Main inference method.
         Args:
-            model_path (str): Path to the trained Keras model (.keras file)
-            scaler_x_path (str): Path to the input scaler (.pkl file)
-            scaler_y_path (str): Path to the output scaler (.pkl file)
-            seq_length (int): Sequence length for LSTM input (default: 10)
+            voltage (float): Battery Voltage (V)
+            current (float): Battery Current (A) - Negative for discharge
+            temp (float): Battery Temperature (C)
+        Returns: 
+            float: SOH percentage (0.0 to 100.0)
+            None: If buffer is still filling
         """
-        self.seq_length = seq_length
+        if self.model is None:
+            return None
+
+        # Step 1: Feature Engineering
+        features = self._engineer_features(voltage, current, temp)
+        self.data_buffer.append(features)
         
-        # Load the trained Keras model
-        try:
-            self.model = keras.models.load_model(model_path)
-        except Exception as e:
-            raise RuntimeError(f"Error loading model from {model_path}: {e}")
-        
-        # Load the input scaler
-        try:
-            self.scaler_x = joblib.load(scaler_x_path)
-        except Exception as e:
-            raise RuntimeError(f"Error loading input scaler from {scaler_x_path}: {e}")
-        
-        # Load the output scaler
-        try:
-            self.scaler_y = joblib.load(scaler_y_path)
-        except Exception as e:
-            raise RuntimeError(f"Error loading output scaler from {scaler_y_path}: {e}")
-        
-        # Initialize rolling buffer for sequence storage
-        self.buffer = deque(maxlen=seq_length)
-        
-        # History for calculating derived features
-        self.voltage_history = deque(maxlen=5)  # For moving average
-        self.last_voltage = None  # For voltage change calculation
-    
-    def _calculate_derived_features(self, voltage, current, temp):
-        """
-        Calculate engineered features from raw sensor readings.
-        """
-        # Feature 1: Power
-        power = voltage * current
-        
-        # Feature 2: Voltage Change
-        if self.last_voltage is not None:
-            voltage_change = voltage - self.last_voltage
-        else:
-            voltage_change = 0.0  # First reading has no change
-        
-        # Update last voltage for next iteration
-        self.last_voltage = voltage
-        
-        # Feature 3: Voltage Moving Average
-        self.voltage_history.append(voltage)
-        voltage_mavg = np.mean(self.voltage_history)
-        
-        # Feature 4: Current-Temperature Interaction
-        current_temp_interaction = current * temp
-        
-        # Construct feature vector
-        features = np.array([
-            voltage,
-            current,
-            temp,
-            power,
-            voltage_change,
-            voltage_mavg,
-            current_temp_interaction
-        ])
-        
-        return features
-    
-    def predict_realtime(self, voltage, current, temp, verbose=True):
-        """
-        Perform real-time SOC prediction from a single sensor reading.
-        Returns:
-            float or None: Predicted SOC % (or None if buffer not full)
-        """
-        # Step 1: Calculate engineered features
-        features = self._calculate_derived_features(voltage, current, temp)
-        
-        # Step 2: Add to buffer
-        self.buffer.append(features)
-        
-        # Step 3: Check if buffer is full
-        if len(self.buffer) < self.seq_length:
+        # Wait for buffer to fill (LSTM needs history)
+        if len(self.data_buffer) < self.seq_length:
             return None
         
-        # Step 4: Create sequence from buffer (shape: seq_length x 7)
-        sequence = np.array(self.buffer)
+        # Step 2: Prepare Input
+        # Convert buffer to numpy array (1, 100, 6)
+        input_raw = np.array(self.data_buffer)
         
-        # Step 5: Reshape for scaling (flatten to 2D)
-        sequence_scaled = self.scaler_x.transform(sequence)
+        # Normalize using the trained scaler
+        input_scaled = self.scaler_X.transform(input_raw)
         
-        # Step 6: Reshape for model input (add batch dimension)
-        model_input = sequence_scaled.reshape(1, self.seq_length, 7)
+        # Reshape for LSTM [Batch, Timesteps, Features]
+        input_seq = input_scaled.reshape(1, self.seq_length, -1)
         
-        # Step 7: Run prediction
-        prediction_scaled = self.model.predict(model_input, verbose=0)
+        # Step 3: AI Prediction
+        # verbose=0 prevents flooding console with progress bars
+        raw_soh_scaled = self.model.predict(input_seq, verbose=0)
         
-        # Step 8: Inverse transform to get real SOC %
-        soc_prediction = self.scaler_y.inverse_transform(prediction_scaled)[0, 0]
+        # Convert back to real percentage
+        raw_soh = self.scaler_y.inverse_transform(raw_soh_scaled)[0, 0]
         
-        if verbose:
-            print(f"[PREDICT] SOC Prediction: {soc_prediction:.2f}%")
+        # Step 4: Robust Smoothing
+        # Add to smoothing buffer
+        self.soh_smoothing.append(raw_soh)
         
-        return soc_prediction
-    
-    def reset_buffer(self):
-        """
-        Reset the rolling buffer and history.
-        """
-        self.buffer.clear()
-        self.voltage_history.clear()
-        self.last_voltage = None
-    
-    def get_buffer_status(self):
-        """
-        Get current buffer status.
-        """
-        return {
-            'current_size': len(self.buffer),
-            'max_size': self.seq_length,
-            'ready_for_prediction': len(self.buffer) == self.seq_length,
-            'fill_percentage': (len(self.buffer) / self.seq_length) * 100
-        }
+        # Calculate average of the buffer
+        smooth_soh = sum(self.soh_smoothing) / len(self.soh_smoothing)
+        
+        # Step 5: Safety Clamping
+        # SOH cannot physically be < 0% or > 100%
+        final_soh = max(0.0, min(100.0, smooth_soh))
+        
+        return final_soh
 
-# ============================================================================
-# MAIN GUARD: Only runs if file is executed directly (not when imported)
-# ============================================================================
-if __name__ == "__main__":
-    print("="*80)
-    print("BMS PREDICTOR LIBRARY")
-    print("Run this file purely to test class instantiation.")
-    print("="*80)
-    
-    try:
-        # Example test usage
-        print("Testing initialization...")
-        # Note: Paths here assume default directory structure. 
-        # Update them if running from a different location.
-        predictor = BMS_Predictor(
-            model_path='models/bms_model_best.keras',
-            scaler_x_path='scalers/scaler_X.pkl',
-            scaler_y_path='scalers/scaler_y.pkl'
-        )
-        print("✅ BMS_Predictor initialized successfully.")
-    except Exception as e:
-        print(f"⚠️ Initialization skipped (Files likely missing): {e}")
+    def reset_history(self):
+        """Resets the history buffer (useful for testing)"""
+        self.data_buffer.clear()
+        self.soh_smoothing.clear()
+        self.cumulative_energy = 0.0
+        print("Dataset history reset.")
