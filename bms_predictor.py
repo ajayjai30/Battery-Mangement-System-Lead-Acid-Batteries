@@ -104,12 +104,6 @@ class BMSPredictor:
         if self.model is None:
             return None
 
-        # Step 1: Feature Engineering
-        #The division for voltage is done because the paper used for this project made a battery by 
-        #connecting 6 2V batteries into a 12 V battery, here the division will remain as a scale down from 12 to 2V
-        # as this is completely allowed by the laws of series connections(voltage increase linearly (Vsum=v1+v2+v3+v4+v5+v6))
-        # so scaled down voltage is written as below
-        voltage/=6.0
         features = self._engineer_features(voltage, current, temp)
         self.data_buffer.append(features)
         
@@ -153,5 +147,6 @@ class BMSPredictor:
         self.soh_smoothing.clear()
         self.cumulative_energy = 0.0
         print("Dataset history reset.")
+
 
 
