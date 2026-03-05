@@ -50,16 +50,18 @@ The model outputs a single scalar value ($0\% - 100\%$) representing the SOH. Th
 ## 📂 Project Structure
 
 ```bash
-├── models/
-│   └── bms_soh_model_best.keras  # The trained AI Brain (Deep LSTM architecture)
-├── scalers/
-│   ├── scaler_X_soh.pkl          # Pre-fitted scaler for normalizing input sensors (V, I, T)
-│   └── scaler_y_soh.pkl          # Decodes the model's output back to a readable SOH %
-├── bms_predictor.py              # Core AI Class: Manages the rolling buffer, feature extraction, and inference
-├── thingspeak_bridge.py          # IoT Bridge: Connects the AI model to the ThingSpeak Cloud for remote monitoring
-├── training_pipeline.ipynb       # The complete Jupyter Notebook used to clean data and train the model
-├── requirements.txt              # List of necessary Python dependencies
-└── README.md                     # Project documentation
+├── Model/
+│   ├── soh_model_gpu.keras            # GPU-optimized Keras model
+│   └── soh_model_robust.tflite        # TFLite robustness model
+├── Scalers/
+│   ├── scaler_X_soh.pkl               # Pre-fitted scaler for normalizing input sensors (V, I, T)
+│   └── scaler_y_soh.pkl               # Decodes the model's output back to a readable SOH %
+├── bms_predictor.py                   # Core AI Class: Manages the rolling buffer, feature extraction, and inference
+├── FINAL_IMPLEMENTATION_BMS_(SOH_PREDICTION).ipynb # Full implementation Jupyter Notebook with Gradio UI
+├── training-pipeline-for-bms-soh-prediction.ipynb  # The Jupyter Notebook used to train the model
+├── processed_bms_data.zip             # Processed dataset file
+├── requirements.txt                   # List of necessary Python dependencies
+└── README.md                          # Project documentation
 ```
 
 ---
@@ -85,16 +87,13 @@ pip install -r requirements.txt
 
 ---
 
-### 3. Usage (Real-Time Cloud Loop)
+### 3. Usage (Real-Time Cloud Loop via Gradio)
 
-To start the automated bridge that pulls live data from ThingSpeak, processes the health metrics, and logs the SOH to the console:
+To start the automated bridge that pulls live data from ThingSpeak, processes the health metrics, and logs the SOH to the console, you can use the interactive Gradio App inside the notebook:
 
-```bash
-python thingspeak_bridge.py
-```
-
-**Note:**  
-You must update the `THINGSPEAK_CHANNEL_ID` and `API_KEY` variables inside the script to match your specific IoT channel.
+1. Open `FINAL_IMPLEMENTATION_BMS_(SOH_PREDICTION).ipynb`.
+2. Run all cells to launch the Gradio Dashboard.
+3. Select "Live ThingSpeak" mode and enter your `THINGSPEAK_CHANNEL_ID` and `API_KEY` to stream data.
 
 ---
 
@@ -103,14 +102,12 @@ You must update the `THINGSPEAK_CHANNEL_ID` and `API_KEY` variables inside the s
 You can easily import the predictor logic into your own custom dashboard or automation script:
 
 ```python
-from bms_predictor import BMS_Predictor
+from bms_predictor import BMSPredictor
 
 # Initialize the AI engine with the trained artifacts
-ai = BMS_Predictor(
-    model_path='models/bms_soh_model_best.keras',
-    scaler_x_path='scalers/scaler_X_soh.pkl',
-    scaler_y_path='scalers/scaler_y_soh.pkl',
-    window_size=10  # Must match the training window
+ai = BMSPredictor(
+    model_dir='Model',
+    scaler_dir='Scalers'
 )
 
 # Simulate feeding live data (Voltage, Current, Temp)
